@@ -1,0 +1,27 @@
+[Oo]bj/
+[Bb]in/
+*.suo
+*.csproj.user
+*.pidb
+*.userprefs
+*.pyc
+
+*.DS_Store
+
+PiEMOS/Library/
+PiEMOS/builds/
+
+PiEMOS/Assets/Plugins/BinaryConverters.bak
+
+StyleCop.Cache
+
+# Local Astyle
+astyle.conf
+run-astyle
+
+# monodevelop backups
+*.orig
+
+# StyleCopCmd generated
+StyleCopViolations.xml
+
