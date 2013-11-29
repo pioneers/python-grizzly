@@ -1,104 +1,170 @@
+from __future__ import division
 import usb.core
 import struct
-from __future__ import division
 
 class GrizzlyUSB(object):
-	def __init__(self, idVendor = 0x03eb, idProduct=0x204f):
-		dev = usb.core.find(idVendor = idVendor, idProduct = idProduct)
-		if (dev == None):
-			raise Exception("Could not find GrizzlyBear device (idVendor=%d, idProduct=%d)" % (idVendor, idProduct))
-		try:
-			dev.detach_kernel_driver(0)
-		except usb.USBError:
-			pass
+	"""Handles low level Grizzly communication over the USB protocol"""
+    def __init__(self, idVendor = 0x03eb, idProduct=0x204f):
+        dev = usb.core.find(idVendor = idVendor, idProduct = idProduct)
+        if (dev == None):
+            raise Exception("Could not find GrizzlyBear device (idVendor=%d, idProduct=%d)" % (idVendor, idProduct))
+        try:
+            dev.detach_kernel_driver(0)
+        except usb.USBError:
+            pass
+        
+        self._dev = dev
+        
+    def send_bytes(self, cmd):
+		"""Sends a 16 byte packet to the grizzly. Does not expect to read anything back.
+		Packet format looks like:
+		Byte 0:           Register address
+		Byte 1 (bit 6:0): Length of data to read/write in bytes
+		Byte 1 (bit 7):   R/W flag (1 = write)
+		Byte 2-15:        Data
 		
-		self._dev = dev
+		The register address automatically increments allowing you to write up to
+		14 sequential registers at a time"""
+        assert len(cmd) == 16, "Must send 16 bytes"
+        self._dev.ctrl_transfer(0x21, 0x09, 0x0300, 0, cmd)
+        
+    def exchange_bytes(self, cmd):
+		"""Sends a packet to the grizzly, requesting information. Reads back
+		the data requested. Packet format looks like:
+		Byte 0:           Register
+		Byte 1 (bit 6:0): Length of data to read/write
+		Byte 1 (bit 7):   R/W flag (1 = write)
+		Byte 2-15:        Data
 		
-	def send_bytes(self, cmd):
-		assert len(cmd) == 16, "Must send 16 bytes"
-		self._dev.ctrl_transfer(0x21, 0x09, 0x0300, 0, cmd)
-		
-	def exchange_bytes(self, cmd):
-		assert len(cmd) == 16, "Must send 16 bytes"
-		self._dev.ctrl_transfer(0x21, 0x09, 0x0300, 0, cmd)
-		numBytes = cmd[1] & 0x7f
-		return self._dev.ctrl_transfer(0xa1, 0x01, 0x0301, 0, numBytes + 1)[1::]
-		
-		
+		The length of the read indicates how many registers you want to read from
+		sequentially"""
+        assert len(cmd) == 16, "Must send 16 bytes"
+        self._dev.ctrl_transfer(0x21, 0x09, 0x0300, 0, cmd)
+        numBytes = ord(cmd[1]) & 0x7f
+        return self._dev.ctrl_transfer(0xa1, 0x01, 0x0301, 0, numBytes + 1)[1::]
+        
+        
 class Grizzly(object):
-	COMMAND_ENABLE_USB_MODE				= "\x9A\x81\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
-	COMMAND_DISABLE_TIMEOUT             = "\x80\x82\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
-	
-	def __init__(self, device):
-		self._dev = device
-		self._ticks = 0
-		self._dev.send_bytes(Grizzly.COMMAND_ENABLE_USB_MODE)
-		self._dev.send_bytes(Grizzly.COMMAND_DISABLE_TIMEOUT)
-	
-	def set_register(self, addr, data):
-		assert len(data) <= 14, "Cannot write more than 14 bytes at a time"
-		cmd = chr(addr) + chr(len(data) | 0x80)
-		for byte in data:
-			cmd += chr(byte)
-		cmd += (16 - len(cmd)) * chr(0)
-		self._dev.send_bytes(cmd)
-		
-	def read_register(self, addr, numBytes):
-		assert numBytes <= 0x7f, "Cannot read more than 127 bytes at a time"
-		cmd = chr(addr) + chr(numBytes)
-		cmd += (16 - len(cmd)) * chr(0)
-		self._dev.exchange_bytes(cmd)
-		
-	def setMode(self, controlmode, drivemode):
-		self.set_register(Addr.Mode, 1, [0x01 | controlmode | drivemode])
-	
-	def setSpeed(self, setpoint):
-		buf = [0, 0, setpoint, 0, 0]
-		self.set_register(Addr.Speed, buf)
-		
-	def _read_as_int(self, addr, numBytes):
-	    buf = self.read_register(addr, numBytes)
-	    rtn = 0
-	    for i, byte in enumerate(buf):
-	        rtn |= byte << 8 * i
-	    return rtn
+	"""The high level command API. This allows setting arbitrary registers and several
+	convenience methods that could be used commonly. Almost a direct port from the
+	implementation in C#. However the control loop is expected to be much greater so
+	there is no need for some of the optimizations in PiER."""
+	COMMAND_ENABLE_USB_MODE      			= "\x9A\x81\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+	COMMAND_DISABLE_TIMEOUT             	= "\x80\x82\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+    
+    def __init__(self, device):
+		"""Creates the object to represent the Grizzly. Provides access to
+		control the grizzly. The @device argument refers to the low level
+		GrizzlyUSB object that is connected as a USB device."""
+        self._dev = device
+        self._ticks = 0
+        self._dev.send_bytes(Grizzly.COMMAND_ENABLE_USB_MODE)
+        self._dev.send_bytes(Grizzly.COMMAND_DISABLE_TIMEOUT)
+    
+    def set_register(self, addr, data):
+		"""Sets an arbitrary register at @addr and subsequent registers depending
+		on how much data you decide to write. It will automatically fill extra
+		bytes with zeros. You cannot write more than 14 bytes at a time.
+		@addr should be a static constant from the Addr class, e.g. Addr.Speed"""
+        assert len(data) <= 14, "Cannot write more than 14 bytes at a time"
+        cmd = chr(addr) + chr(len(data) | 0x80)
+        for byte in data:
+            cmd += chr(byte & 0xff)
+        cmd += (16 - len(cmd)) * chr(0)
+        self._dev.send_bytes(cmd)
+        
+    def read_register(self, addr, numBytes):
+		"""Reads @numBytes bytes from the grizzly starting at @addr. Due
+		to packet format, cannot read more than 127 packets at a time.
+		Returns a byte array of the requested data in little endian.
+		@addr should be from the Addr class e.g. Addr.Speed"""
+        assert numBytes <= 0x7f, "Cannot read more than 127 bytes at a time"
+        cmd = chr(addr) + chr(numBytes)
+        cmd += (16 - len(cmd)) * chr(0)
+        return self._dev.exchange_bytes(cmd)
+        
+    def setMode(self, controlmode, drivemode):
+		"""Higher level abstraction for setting the mode register. This will
+		set the mode according the the @controlmode and @drivemode you specify.
+		@controlmode and @drivemode should come from the ControlMode and DriveMode
+		class respectively."""
+        self.set_register(Addr.Mode, [0x01 | controlmode | drivemode])
+    
+    def Setpoint(self, setpoint):
+		"""Higher level abstraction for setting the speed register. This
+		register is also used to set the setpoint in PID mode. Since
+		the @setpoint is always an int, we can just set the last two bytes."""
+        buf = [0, 0, setpoint & 0xff, (setpoint >> 8) & 0xff, 0]
+        self.set_register(Addr.Speed, buf)
+        
+    def _read_as_int(self, addr, numBytes):
+		"""Convenience method. Oftentimes we need to read a range of
+		registers to represent an int. This method will automatically read
+		@numBytes registers starting at @addr and convert the array into an int."""
+        buf = self.read_register(addr, numBytes)
+        rtn = 0
+        for i, byte in enumerate(buf):
+            b = byte & 0xff
+            rtn |= b << 8 * i
+        return rtn
     
     def _set_as_int(self, addr, val, numBytes = 1):
+		"""Convenience method. Oftentimes we need to set a range of registers
+		to represent an int. This method will automatically set @numBytes registers
+		starting at @addr. It will convert the int @val into an array of bytes."""
         buf = []
         for i in range(numBytes):
             buf.append((val >> 8 * i) & 0xff)
         self.set_register(addr, buf)
-	
-	def MotorCurrent():
-        return _read_as_int(Addr.MotorCurrent, 2)
     
-    def GetTimeout():
-        return _read_as_int(Addr.Timeout, 2)
+    def ReadMotorCurrent(self):
+		"""High level abstraction. Reads back the current going through the motor
+		as reported by the Grizzly. Returns a float that represents the number
+		of amps going through the motor."""
+        rawval = self._read_as_int(Addr.MotorCurrent, 2)
+        return (5.0/1024.0) * (1000.0 / 66.0) * (rawval - 511)
     
-    def ReadEncoder():
-        return _read_as_int(Addr.EncoderCount, 4)
+    def ReadEncoder(self):
+		"""High level abstraction. Reads back the current encoder count in ticks.
+		There are 64 ticks per motor spindle revolution."""
+        return self._read_as_int(Addr.EncoderCount, 4)
         
-    def hasReset():
-        currentTime = _read_as_int(Addr.Uptime, 4)
+    def WriteEncoder(self, count):
+		"""High level abstraction. Allows you to overwrite the current
+		encoder count. Allows for reseting the position."""
+		self._set_as_int(Addr.EncoderCount, count, 4)
+        
+    def hasReset(self):
+		"""Checks the grizzly to see if it reset itself because of
+		voltage sag or other reasons."""
+        currentTime = self._read_as_int(Addr.Uptime, 4)
         if currentTime <= self._ticks:
+			self._ticks = currentTime
             return True
+        self._ticks = currentTime
         return False
     
-    def LimitAcceleration(accel):
-        if accel > 0x8f:
-            raise Exception("Acceleration limit cannot exceed 143")
+    def LimitAcceleration(self, accel):
+		"""Sets the acceleration limit on the Grizzly. The max value is
+		143. Units are change in pwm per millisecond."""
+        assert accel < 0x8f, "Acceleration limit cannot exceed 143"
         self._set_as_int(Addr.AccelLimit, accel)
         
-    def LimitCurrent(curr):
-        self._set_as_int(Addr.CurrentLimit, curr)
+    def LimitCurrent(self, curr):
+		"""Sets the current limit on the Grizzly. The units are in amps."""
+		current = (curr * (1024.0 / 5.0) * (66.0 / 1000.0)) + 511
+        self._set_as_int(Addr.CurrentLimit, current, 2)
         
-    def InitPID(kp, ki, kd):
-        p, i, d = map(lambda x: x * (2 ** 16), (kp, ki, kd))
-        self._set_as_int(Addr.PConstant, p)
-        self._set_as_int(Addr.IConstant, i)
-        self._set_as_int(Addr.DConstant, d)
+    def InitPID(self, kp, ki, kd):
+		"""Sets the PID constants for the PID modes. Arguments are all
+		floating point numbers."""
+        p, i, d = map(lambda x: int(x * (2 ** 16)), (kp, ki, kd))
+        self._set_as_int(Addr.PConstant, p, 4)
+        self._set_as_int(Addr.IConstant, i, 4)
+        self._set_as_int(Addr.DConstant, d, 4)
         
-    def GetPIDConstants():
+    def ReadPIDConstants(self):
+		"""Reads back the PID constants stored on the Grizzly."""
         p = self._read_as_int(Addr.PConstant, 4)
         i = self._read_as_int(Addr.IConstant, 4)
         d = self._read_as_int(Addr.DConstant, 4)
@@ -106,24 +172,28 @@ class Grizzly(object):
         return map(lambda x: x / (2 ** 16), (p, i, d))
 
 class ControlMode(object):
-	NO_PID 							= 0x02
-	SPEED_PID 						= 0x04
-	POSITION_PID 					= 0x06
+	"""Enum for the control modes. Use these as input to setMode."""
+    NO_PID                          = 0x02
+    SPEED_PID                       = 0x04
+    POSITION_PID                    = 0x06
 
 class DriveMode(object):
-	DRIVE_COAST 					= 0x00
-	DRIVE_BRAKE 					= 0x10
-	BRAKE_COAST 					= 0x20
-	
+	"""Enum for the drive modes. Use these as inputs to setMode."""
+    DRIVE_COAST                     = 0x00
+    DRIVE_BRAKE                     = 0x10
+    BRAKE_COAST                     = 0x20
+    
 class Addr(object):
-	Mode 							= 0x01
-	Speed	 						= 0x04
-	MotorCurrent 					= 0x10
-	EncoderCount 					= 0x20
-	PConstant						= 0x30
-	IConstant						= 0x34
-	DConstant						= 0x38
-	Timeout							= 0x80
-	CurrentLimit                    = 0x82
-	AccelLimit						= 0x90
-	Uptime							= 0x94
+	"""Enum for the i2c registers on the Grizzly. Use these as inputs
+	to all addr arguments."""
+    Mode                            = 0x01
+    Speed                           = 0x04
+    MotorCurrent                    = 0x10
+    EncoderCount                    = 0x20
+    PConstant                       = 0x30
+    IConstant                       = 0x34
+    DConstant                       = 0x38
+    Timeout                         = 0x80
+    CurrentLimit                    = 0x82
+    AccelLimit                      = 0x90
+    Uptime                          = 0x94
