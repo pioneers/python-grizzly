@@ -27,11 +27,13 @@ class GrizzlyUSB(object):
 		
 class Grizzly(object):
 	COMMAND_ENABLE_USB_MODE				= "\x9A\x81\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
-
+	COMMAND_DISABLE_TIMEOUT             = "\x80\x82\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+	
 	def __init__(self, device):
 		self._dev = device
 		self._ticks = 0
-		#self._dev.send_bytes(Grizzly.COMMAND_ENABLE_USB_MODE)
+		self._dev.send_bytes(Grizzly.COMMAND_ENABLE_USB_MODE)
+		self._dev.send_bytes(Grizzly.COMMAND_DISABLE_TIMEOUT)
 	
 	def set_register(self, addr, data):
 		assert len(data) <= 14, "Cannot write more than 14 bytes at a time"
