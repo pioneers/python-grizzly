@@ -6,6 +6,7 @@
 *.userprefs
 *.pyc
 .ipynb_checkpoints/
+*.ipynb
 
 *.DS_Store
 
