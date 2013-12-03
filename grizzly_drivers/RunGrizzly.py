@@ -11,7 +11,7 @@ grizzly.limit_current(5)
 inputs = event_stream(4000)
 for event in inputs:
     if event.key == "Y2":
-        throttle = int(event.value) / 327
+        throttle = int(event.value) / 328
         grizzly.set_target(throttle)
     if event.key == "A":
         print("Current: " + str(grizzly.read_motor_current()) + "Encoder: " + str(grizzly.read_encoder()))

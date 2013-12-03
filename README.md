@@ -17,7 +17,8 @@ Try using RunGrizzly.py:
 *Note that you must run python with sudo to gain access to usb privileges.
 *Alternatively, you can copy the .rules file into your /etc/udev/rules.d folder.
 *As long as you are in the sudo group, you will be given non-root access to the
-*grizzly as soon as you plug it in. You still need to use sudo for the usb xbox controller
+*grizzly as soon as you plug it in. There is another udev rule that grants non-root
+access to the 360 controller. You might need to be added to the uinput group to use it.
 4. Now the right analog stick in the y-direction controls the Grizzly throttle.
 
 xbox_read.py shamelessly copypasta'd from http://github.com/zephod/lego-pi

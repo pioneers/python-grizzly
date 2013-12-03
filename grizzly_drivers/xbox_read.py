@@ -21,7 +21,7 @@ def apply_deadzone(x, deadzone, scale):
 
 def event_stream(deadzone=0,scale=32768):
     _data = None
-    subprocess = popen('nohup xboxdrv','r',65536)
+    subprocess = popen('nohup xboxdrv -d --no-uinput','r',65536)
     while (True):
         line = subprocess.readline()
         if 'Error' in line:

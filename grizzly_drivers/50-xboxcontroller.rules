@@ -1,0 +1,6 @@
+ATTRS{idVendor}=="045e", ATTRS{idProduct}=="028e", MODE="0666", GROUP:="uinput"
+
+KERNEL=="event*",       NAME="input/%k", MODE:="666", GROUP="uinput"
+KERNEL=="js*",          NAME="input/%k", MODE:="666", GROUP="uinput"
+
+KERNEL=="uinput",       MODE:="0666", GROUP="uinput"

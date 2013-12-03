@@ -23,9 +23,12 @@ class GrizzlyUSB(object):
                 internal_addr = device.ctrl_transfer(0xa1, 0x01, 0x0301, 0, 2)[1]
                 if internal_addr == (addr << 1):
                     self._dev = device
+                    return
+            raise LookupError("Could not find GrizzlyBear with address %s" % str(addr))
         
     def send_bytes(self, cmd):
         """Sends a 16 byte packet to the grizzly. Does not expect to read anything back.
+        
         Packet format looks like:
         Byte 0:           Register address
         Byte 1 (bit 6:0): Length of data to read/write in bytes
@@ -39,7 +42,9 @@ class GrizzlyUSB(object):
         
     def exchange_bytes(self, cmd):
         """Sends a packet to the grizzly, requesting information. Reads back
-        the data requested. Packet format looks like:
+        the data requested.
+        
+        Packet format looks like:
         Byte 0:           Register
         Byte 1 (bit 6:0): Length of data to read/write
         Byte 1 (bit 7):   R/W flag (1 = write)
@@ -56,8 +61,7 @@ class GrizzlyUSB(object):
 class Grizzly(object):
     """The high level command API. This allows setting arbitrary registers and several
     convenience methods that could be used commonly. Almost a direct port from the
-    implementation in C#. However the control loop is expected to be much greater so
-    there is no need for some of the optimizations in PiER."""
+    implementation in C#."""
     
     def __init__(self, addr=0x0f):
         """Creates the object to represent the Grizzly. Provides access to
@@ -100,9 +104,27 @@ class Grizzly(object):
     def set_target(self, setpoint):
         """Higher level abstraction for setting the speed register. This
         register is responsible for telling the grizzly at what speed or
-        position to drive at. Since the @setpoint is always an int, we
-        can just set the last two bytes."""
-        buf = [0, 0, cast_to_byte(setpoint), cast_to_byte(setpoint >> 8), 0]
+        position to drive at. The different control modes and type it expects is
+        documented in the table below:
+        
+        Mode            Type                Range
+        NO_PID          16.16 fixed         [-100, 100]
+        
+        SPEED_PID       int16               Defined by your motor. Units are in
+                                            encoder ticks per millisecond. This
+                                            value is technically unbounded but
+                                            realistically limited by the maximum
+                                            motor speed.
+                                            
+        POSITION_PID    int16               Defined by your encoder. Units are
+                                            in encoder ticks from zero. This 
+                                            value is technically unbounded but
+                                            realistically limited by integer
+                                            overflow.
+        """
+        
+        fixed_set = int(setpoint * (2 ** 16))
+        buf = [cast_to_byte(fixed_set >> 8 * i) for i in range(5)]
         self.set_register(Addr.Speed, buf)
         
     def _read_as_int(self, addr, numBytes):
@@ -122,7 +144,7 @@ class Grizzly(object):
         """Convenience method. Oftentimes we need to set a range of registers
         to represent an int. This method will automatically set @numBytes registers
         starting at @addr. It will convert the int @val into an array of bytes."""
-        if type(val) == type(int):
+        if not isinstance(val, int):
             raise ValueError("val must be an int. You provided: %s" % str(val))
         buf = []
         for i in range(numBytes):
@@ -137,8 +159,7 @@ class Grizzly(object):
         return (5.0/1024.0) * (1000.0 / 66.0) * (rawval - 511)
     
     def read_encoder(self):
-        """High level abstraction. Reads back the current encoder count in ticks.
-        There are 64 ticks per motor spindle revolution."""
+        """High level abstraction. Reads back the current encoder count in ticks."""
         return self._read_as_int(Addr.EncoderCount, 4)
         
     def write_encoder(self, count):
@@ -148,7 +169,8 @@ class Grizzly(object):
         
     def has_reset(self):
         """Checks the grizzly to see if it reset itself because of
-        voltage sag or other reasons."""
+        voltage sag or other reasons. Useful to reinitialize acceleration or
+        current limiting."""
         currentTime = self._read_as_int(Addr.Uptime, 4)
         if currentTime <= self._ticks:
             self._ticks = currentTime
@@ -158,7 +180,11 @@ class Grizzly(object):
     
     def limit_acceleration(self, accel):
         """Sets the acceleration limit on the Grizzly. The max value is
-        143. Units are change in pwm per millisecond."""
+        143. Units are change in pwm per millisecond. Internally, the pwm is in
+        the range [-0x7f, 0x7f] or [-127, 127]. So in one millisecond the maximum
+        acceleration limit possible is 127 - -127 = 142. The internal default
+        value is 4*.
+        *Note: subject to change."""
         if accel >= 143:
             raise ValueError("Acceleration limit cannot exceed 143. You provided: %s" % str(accel))
         if accel <= 0:
@@ -166,7 +192,8 @@ class Grizzly(object):
         self._set_as_int(Addr.AccelLimit, accel)
         
     def limit_current(self, curr):
-        """Sets the current limit on the Grizzly. The units are in amps."""
+        """Sets the current limit on the Grizzly. The units are in amps. The
+        internal default value is 5 amps."""
         if curr <= 0:
             raise ValueError("Current limit must be a positive number. You provided: %s" % str(curr))
         current = int(curr * (1024.0 / 5.0) * (66.0 / 1000.0))
