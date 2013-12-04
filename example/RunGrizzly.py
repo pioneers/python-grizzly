@@ -1,20 +1,20 @@
 #!/usr/bin/env python
 
-from libgrizzlyusb import *
+from grizzly import *
 from xbox_read import event_stream
 
-grizzly = Grizzly()
-grizzly.set_mode(ControlMode.NO_PID, DriveMode.DRIVE_BRAKE)
-grizzly.limit_acceleration(20)
-grizzly.limit_current(5)
+g = Grizzly()
+g.set_mode(ControlMode.NO_PID, DriveMode.DRIVE_BRAKE)
+g.limit_acceleration(20)
+g.limit_current(5)
 
 inputs = event_stream(4000)
 for event in inputs:
     if event.key == "Y2":
         throttle = int(event.value) / 328
-        grizzly.set_target(throttle)
+        g.set_target(throttle)
     if event.key == "A":
-        print("Current: " + str(grizzly.read_motor_current()) + "Encoder: " + str(grizzly.read_encoder()))
+        print("Current: " + str(g.read_motor_current()) + "Encoder: " + str(g.read_encoder()))
 
 
 # Appendix: Keys
