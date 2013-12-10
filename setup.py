@@ -2,8 +2,8 @@
 
 from distutils.core import setup
 
-setup(name='Grizzly',
-      version='0.0.1',
+setup(name='grizzly',
+      version='0.0.2',
       description='Grizzly Bear USB Drivers',
       author='Pioneers in Engineering',
       author_email='engineeringcoordinator@pioneers.berkeley.edu',
