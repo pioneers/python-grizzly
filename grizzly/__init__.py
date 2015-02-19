@@ -6,7 +6,7 @@ class GrizzlyUSB(object):
     """Handles low level Grizzly communication over the USB protocol"""
     COMMAND_GET_ADDR            = "\x9b\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
     def __init__(self, addr, idVendor = 0x03eb, idProduct=0x204f):
-        all_dev = usb.core.find(find_all = True, idVendor = idVendor, idProduct = idProduct)
+        all_dev = list(usb.core.find(find_all = True, idVendor = idVendor, idProduct = idProduct))
         for dev in all_dev:
             try:
                 dev.detach_kernel_driver(0)
