@@ -5,26 +5,59 @@ import struct
 class GrizzlyUSB(object):
     """Handles low level Grizzly communication over the USB protocol"""
     COMMAND_GET_ADDR            = "\x9b\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
-    def __init__(self, addr, idVendor = 0x03eb, idProduct=0x204f):
+    ID_VENDOR = 0x03eb
+    ID_PRODUCT = 0x204f
+    USB_DEVICE_ERROR = -999
+    def __init__(self, addr, idVendor = ID_VENDOR, idProduct=ID_PRODUCT):
+        self._dev = None
+
+        all_dev = GrizzlyUSB.get_all_usb_devices(idVendor, idProduct)
+            
+        if len(all_dev) <= 0:
+            raise usb.USBError("Could not find any GrizzlyBear device (idVendor=%d, idProduct=%d)" % (idVendor, idProduct))
+        if len(all_dev) == 1:
+            self._dev = all_dev[0]
+        else:
+            # bound devices is a list of devices that are already busy.
+            bound_devices = []
+            for device in all_dev:
+
+                internal_addr = GrizzlyUSB.get_device_address(device)
+                if internal_addr == addr:
+                    self._dev = device
+                elif internal_addr == GrizzlyUSB.USB_DEVICE_ERROR:
+                    bound_devices.append(device)
+
+            # we release all devices that we aren't using and aren't bound.
+            for device in all_dev:
+                if device is not self._dev and device not in bound_devices:
+                    usb.util.dispose_resources(device)
+
+            # If we couldn't find a device, then we're done.
+            if self._dev is None:
+                raise LookupError("Could not find GrizzlyBear with address {0}, or id {1}".format(addr, addr_to_id(addr)))
+
+    @staticmethod
+    def get_all_usb_devices(idVendor, idProduct):
+        """ Returns a list of all the usb devices matching the provided vendor ID and product ID."""
         all_dev = list(usb.core.find(find_all = True, idVendor = idVendor, idProduct = idProduct))
         for dev in all_dev:
             try:
                 dev.detach_kernel_driver(0)
             except usb.USBError:
                 pass
-            
-        if len(all_dev) <= 0:
-            raise usb.USBError("Could not find GrizzlyBear device (idVendor=%d, idProduct=%d)" % (idVendor, idProduct))
-        if len(all_dev) == 1:
-            self._dev = all_dev[0]
-        else:
-            for device in all_dev:
-                device.ctrl_transfer(0x21, 0x09, 0x0300, 0, GrizzlyUSB.COMMAND_GET_ADDR)
-                internal_addr = device.ctrl_transfer(0xa1, 0x01, 0x0301, 0, 2)[1]
-                if internal_addr == (addr << 1):
-                    self._dev = device
-                    return
-            raise LookupError("Could not find GrizzlyBear with address %s" % str(addr))
+        return all_dev
+
+    @staticmethod
+    def get_device_address(usb_device):
+        """ Returns the grizzly's internal address value. Returns a negative error value in case of error. """
+        try:
+            usb_device.ctrl_transfer(0x21, 0x09, 0x0300, 0, GrizzlyUSB.COMMAND_GET_ADDR)
+            internal_addr = usb_device.ctrl_transfer(0xa1, 0x01, 0x0301, 0, 2)[1]
+            return internal_addr >> 1
+        except usb.USBError as e:
+            return GrizzlyUSB.USB_DEVICE_ERROR
+
         
     def send_bytes(self, cmd):
         """Sends a 16 byte packet to the grizzly. Does not expect to read anything back.
@@ -62,12 +95,40 @@ class Grizzly(object):
     """The high level command API. This allows setting arbitrary registers and several
     convenience methods that could be used commonly. Almost a direct port from the
     implementation in C#."""
+
+    @staticmethod
+    def get_all_ids(idVendor = GrizzlyUSB.ID_VENDOR, idProduct=GrizzlyUSB.ID_PRODUCT):
+        """ Scans for grizzlies that have not been bound, or constructed, and returns a list
+        of their id's, or motor number."""
+        all_dev = GrizzlyUSB.get_all_usb_devices(idVendor, idProduct)
+            
+        if len(all_dev) <= 0:
+            raise usb.USBError("Could not find any GrizzlyBear device (idVendor=%d, idProduct=%d)" % (idVendor, idProduct))
+        else:
+            all_addresses = []
+
+            # bound devices is a list of devices that are already busy.
+            bound_devices = []
+            for device in all_dev:
+                internal_addr = GrizzlyUSB.get_device_address(device)
+
+                if internal_addr == GrizzlyUSB.USB_DEVICE_ERROR: # device bound
+                    bound_devices.append(device)
+                else:
+                    all_addresses.append(internal_addr)
+
+            # we release all devices that we aren't using and aren't bound.
+            for device in all_dev:
+                if device not in bound_devices:
+                    usb.util.dispose_resources(device)
+            return map(addr_to_id, all_addresses)
+
     
-    def __init__(self, addr=0x0f):
+    def __init__(self, id=0):
         """Creates the object to represent the Grizzly. Provides access to
         control the grizzly. The @device argument refers to the low level
         GrizzlyUSB object that is connected as a USB device."""
-        self._dev = GrizzlyUSB(addr)
+        self._dev = GrizzlyUSB(id_to_addr(id))
         self._ticks = 0
         self._set_as_int(Addr.EnableUSB, 1)
         self._set_as_int(Addr.Timeout, 0, 2)
@@ -214,6 +275,14 @@ class Grizzly(object):
         d = self._read_as_int(Addr.DConstant, 4)
         
         return map(lambda x: x / (2 ** 16), (p, i, d))
+
+def id_to_addr(id):
+    """ Maps the motor number to the device address."""
+    return 0x0F - id
+
+def addr_to_id(addr):
+    """ Maps the device address to the motor number."""
+    return 0x0F - addr
         
 def cast_to_byte(val):
     return int(val) & 0xff
